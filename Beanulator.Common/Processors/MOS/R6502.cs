@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Beanulator.Common.Processors.RICOH
+namespace Beanulator.Common.Processors.MOS
 {
     class R6502
     {
