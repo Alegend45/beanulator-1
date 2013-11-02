@@ -2,7 +2,7 @@
 
 namespace Beanulator.Common.Processors.SONY
 {
-    public class Spc700
+    public class SPC700
     {
         private Bus bus;
         private Registers registers;
@@ -25,9 +25,9 @@ namespace Beanulator.Common.Processors.SONY
             [FieldOffset(0x6)] public byte spl;
             [FieldOffset(0x7)] public byte sph;
             [FieldOffset(0x8)] public byte eal;
-            [FieldOffset(0x8)] public byte eah;
-            [FieldOffset(0x8)] public byte idl;
-            [FieldOffset(0x8)] public byte idh;
+            [FieldOffset(0x9)] public byte eah;
+            [FieldOffset(0xa)] public byte idl;
+            [FieldOffset(0xb)] public byte idh;
 
             [FieldOffset(0x0)] public ushort ya;
             [FieldOffset(0x4)] public ushort pc;

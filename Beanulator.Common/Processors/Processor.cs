@@ -10,8 +10,7 @@
             this.thread = new CooperativeThread(main);
         }
 
-        protected abstract void main();
-
+        protected virtual void main() { }
         protected virtual void tick(int cycles)
         {
             if ((this.cycles -= cycles) <= 0)
