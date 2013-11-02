@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Beanulator.Common.Processors.ARM
+namespace Beanulator.Common.Processors.ZILOG
 {
-    class ARM9
+    class Z80
     {
     }
 }

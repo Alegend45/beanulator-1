@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Beanulator.Common.Processors.MIPS
 {
-    class R4300
+    class R4000
     {
     }
 }

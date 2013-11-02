@@ -11,6 +11,13 @@
         }
 
         protected abstract void main();
-        protected abstract void tick();
+
+        protected virtual void tick(int cycles)
+        {
+            if ((this.cycles -= cycles) <= 0)
+            {
+                this.thread.Leave();
+            }
+        }
     }
 }

@@ -1,9 +1,11 @@
-﻿namespace Beanulator.Common
+﻿using System;
+
+namespace Beanulator.Common
 {
     using half = System.UInt16;
     using word = System.UInt32;
 
-    public class Utility
+    public static class Utility
     {
         public static int BitsSet(byte value)
         {
@@ -40,6 +42,19 @@
             }
 
             return count;
+        }
+
+        public static void Initialize<T>(this T[] array)
+            where T : new()
+        {
+            array.Initialize(() => new T());
+        }
+        public static void Initialize<T>(this T[] array, Func<T> factory)
+        {
+            for (int i = 0; i < array.Length; i++)
+            {
+                array[i] = factory();
+            }
         }
     }
 }
