@@ -45,13 +45,13 @@
     <Compile Include="IConsole.cs" />
     <Compile Include="IInputProvider.cs" />
     <Compile Include="IVideoProvider.cs" />
+    <Compile Include="Processors\SHARP\LR35902.cs" />
     <Compile Include="Processors\Processor.cs" />
     <Compile Include="Processors\ARM\ARM7.cs" />
     <Compile Include="Processors\ARM\ARM9.cs" />
     <Compile Include="Processors\MIPS\R4000.cs" />
     <Compile Include="Processors\MOS\R6502.cs" />
     <Compile Include="Processors\MOS\R65816.cs" />
-    <Compile Include="Processors\SHARP\LR35902.cs" />
     <Compile Include="Processors\SONY\Spc700.cs" />
     <Compile Include="Processors\ZILOG\Z80.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
