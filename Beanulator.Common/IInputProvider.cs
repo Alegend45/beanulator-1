@@ -1,12 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
-namespace Beanulator.Common
+﻿namespace Beanulator.Common
 {
     public interface IInputProvider
     {
+        bool GetButtonState(int button);
         void Update();
     }
 }

@@ -4,10 +4,10 @@ namespace Beanulator.GameBoy
 {
     public class CPU : LR35902
     {
-        private byte[] hram = new byte[128]; // $ff80 - $fffe
-        private byte[] vram = new byte[8192]; // $8000 - $9fff
-        private byte[] oram = new byte[160]; // $fe00 - $fea0
-        private byte[] wram = new byte[8192]; // $c000 - $dfff
+        private byte[] hram = new byte[0x0080]; // $ff80 - $fffe
+        private byte[] vram = new byte[0x2000]; // $8000 - $9fff
+        private byte[] oram = new byte[0x00a0]; // $fe00 - $fea0
+        private byte[] wram = new byte[0x2000]; // $c000 - $dfff
         private dynamic cart; // cartridge connector
 
         protected override void transfer()

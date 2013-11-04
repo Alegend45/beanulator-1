@@ -2,20 +2,22 @@
 {
     public abstract class Processor
     {
-        public CooperativeThread thread;
-        public int cycles;
+        public CooperativeThread Thread;
+        public int Cycles;
 
         public Processor()
         {
-            this.thread = new CooperativeThread(main);
+            this.Thread = new CooperativeThread(Main);
         }
 
-        protected virtual void main() { }
-        protected virtual void tick(int cycles)
+        protected virtual void Main() { }
+        protected virtual void Tick(int cycles)
         {
-            if ((this.cycles -= cycles) <= 0)
+            this.Cycles -= cycles;
+
+            if (this.Cycles <= 0)
             {
-                this.thread.Leave();
+                this.Thread.Leave();
             }
         }
     }
