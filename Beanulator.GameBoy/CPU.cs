@@ -10,6 +10,22 @@ namespace Beanulator.GameBoy
         private byte[] wram = new byte[0x2000]; // $c000 - $dfff
         private dynamic cart; // cartridge connector
 
+        protected override void main()
+        {
+            while (true)
+            {
+                base.step();
+            }
+        }
+        protected override void tick(int cycles)
+        {
+            this.cycles -= cycles;
+
+            if (this.cycles <= 0)
+            {
+                this.thread.Leave();
+            }
+        }
         protected override void transfer()
         {
             ushort address = pins.address;

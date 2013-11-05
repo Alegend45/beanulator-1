@@ -43,7 +43,7 @@ namespace Beanulator.Common.Processors.MOS
 
             if (registers.dpl != 0)
             {
-                io(); // internal operation
+                idle();
                 registers.ea += registers.dpl;
             }
         }
@@ -51,12 +51,14 @@ namespace Beanulator.Common.Processors.MOS
         {
             am_dpg();
 
+            idle();
             registers.ea += registers.x;
         }
         private void am_dpy()
         {
             am_dpg();
 
+            idle();
             registers.ea += registers.y;
         }
 
@@ -95,7 +97,7 @@ namespace Beanulator.Common.Processors.MOS
 
         #endregion
 
-        protected abstract void io();
+        protected abstract void idle();
         protected abstract void read();
         protected abstract void write();
 

@@ -45,6 +45,7 @@
     <Compile Include="IConsole.cs" />
     <Compile Include="IInputProvider.cs" />
     <Compile Include="IVideoProvider.cs" />
+    <Compile Include="Processors\SANYO\LC8760.cs" />
     <Compile Include="Processors\SHARP\LR35902.cs" />
     <Compile Include="Processors\Processor.cs" />
     <Compile Include="Processors\ARM\ARM7.cs" />
