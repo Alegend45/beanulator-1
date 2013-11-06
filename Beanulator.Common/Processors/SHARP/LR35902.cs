@@ -11,8 +11,9 @@ namespace Beanulator.Common.Processors.SHARP
         protected Interrupts interrupts;
         protected Pins pins;
         protected Registers registers;
+        protected byte code; // instruction register
 
-        private byte operand(byte code)
+        private byte operand()
         {
             switch ((code >> 0) & 7)
             {
@@ -27,7 +28,7 @@ namespace Beanulator.Common.Processors.SHARP
             case 7: return registers.a;
             }
         }
-        private void operand(byte code, byte data)
+        private void operand(byte data)
         {
             switch ((code >> 3) & 7)
             {
@@ -51,17 +52,17 @@ namespace Beanulator.Common.Processors.SHARP
 
             if (code == 0xcb) // extended opcode
             {
-                if ((code & 0xf8) == 0x00) { op_shl (code, 0); } // [0000 0---] rlc
-                if ((code & 0xf8) == 0x08) { op_shr (code, 0); } // [0000 1---] rrc
-                if ((code & 0xf8) == 0x10) { op_shl (code, 0); } // [0001 0---] rl
-                if ((code & 0xf8) == 0x18) { op_shr (code, 0); } // [0001 1---] rr
-                if ((code & 0xf8) == 0x20) { op_shl (code, 0); } // [0010 0---] sla
-                if ((code & 0xf8) == 0x28) { op_shr (code, 0); } // [0010 1---] sra
-                if ((code & 0xf8) == 0x30) { op_swap(code   ); } // [0011 0---] swap
-                if ((code & 0xf8) == 0x38) { op_shr (code, 0); } // [0011 1---] srl
-                if ((code & 0xc0) == 0x40) { op_bit (code   ); } // [01-- ----] bit
-                if ((code & 0xc0) == 0x80) { op_res (code   ); } // [10-- ----] res
-                if ((code & 0xc0) == 0xc0) { op_set (code   ); } // [11-- ----] set
+                if ((code & 0xf8) == 0x00) { op_shl(0); } // [0000 0---] rlc
+                if ((code & 0xf8) == 0x08) { op_shr(0); } // [0000 1---] rrc
+                if ((code & 0xf8) == 0x10) { op_shl(0); } // [0001 0---] rl
+                if ((code & 0xf8) == 0x18) { op_shr(0); } // [0001 1---] rr
+                if ((code & 0xf8) == 0x20) { op_shl(0); } // [0010 0---] sla
+                if ((code & 0xf8) == 0x28) { op_shr(0); } // [0010 1---] sra
+                if ((code & 0xf8) == 0x30) { op_swap(); } // [0011 0---] swap
+                if ((code & 0xf8) == 0x38) { op_shr(0); } // [0011 1---] srl
+                if ((code & 0xc0) == 0x40) { op_bit(); } // [01-- ----] bit
+                if ((code & 0xc0) == 0x80) { op_res(); } // [10-- ----] res
+                if ((code & 0xc0) == 0xc0) { op_set(); } // [11-- ----] set
             }
             else // standard opcode
             {
@@ -123,32 +124,40 @@ namespace Beanulator.Common.Processors.SHARP
         #endregion
         #region extended instruction set
 
-        private void op_bit(byte code)
+        private void op_bit()
         {
             int b = (code >> 3) & 7;
             int m = (1 << b);
 
-            flags.z = (operand(code) & m) == 0 ? 1 : 0;
+            flags.z = (operand() & m) == 0 ? 1 : 0;
             flags.n = 0;
             flags.h = 1;
         }
-        private void op_res(byte code)
+        private void op_res()
         {
             int b = (code >> 3) & 7;
             int m = (1 << b);
 
-            operand(code, (byte)(operand(code) & ~m));
+            operand((byte)(operand() & ~m));
         }
-        private void op_set(byte code)
+        private void op_set()
         {
             int b = (code >> 3) & 7;
             int m = (1 << b);
 
-            operand(code, (byte)(operand(code) | m));
+            operand((byte)(operand() | m));
         }
-        private void op_shl(byte code, int carry = 0) { throw new System.NotImplementedException(); }
-        private void op_shr(byte code, int carry = 0) { throw new System.NotImplementedException(); }
-        private void op_swap(byte code) { throw new System.NotImplementedException(); }
+        private void op_shl(int carry = 0)
+        {
+            registers.a = (byte)((registers.a << 1) | (carry >> 0));
+            // todo: update flags
+        }
+        private void op_shr(int carry = 0)
+        {
+            registers.a = (byte)((registers.a >> 1) | (carry << 7));
+            // todo: update flags
+        }
+        private void op_swap() { throw new System.NotImplementedException(); }
 
         #endregion
 
