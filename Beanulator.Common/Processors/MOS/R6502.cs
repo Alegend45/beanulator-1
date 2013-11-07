@@ -1,4 +1,5 @@
-﻿namespace Beanulator.Common.Processors.MOS
+﻿using System.Runtime.InteropServices;
+namespace Beanulator.Common.Processors.MOS
 {
     /// <summary>
     /// The MOS Technology 6502
@@ -6,68 +7,53 @@
     public class R6502
     {
         // Registers
-        public StatusRegister P;// Processor status
-        public Register16 PC;// Program Counter
-        public Register16 S;// Stack pointer
-        public byte A;// Accumulator
-        public byte X;// Index register X
-        public byte Y;// Index register Y
-        // Helper registers
-        private Register16 EF;// Effective address.
+        private StatusRegister P;// Processor status
+        private Registers registers;
         private byte M;// Used by read addressing modes
         private byte opcode;
-        // Interrupt
-        private bool NMI_Current;// Represents the current NMI pin (connected to ppu)
-        private bool NMI_Old;// Represents the old status if NMI pin, used to generate NMI in raising edge
-        private bool NMI_Detected;// Determines that NMI is pending (active when NMI pin become true and was false)
-        private int IRGFlags = 0;// Determines that IRQ flags (pins)
-        private bool IRQ_Detected;// Determines that IRQ is pending
-        private int interrupt_vector;// This is the interrupt vector to jump in the last 2 cycles of BRK/IRQ/NMI
-        // This flag suspend interrupt polling; for testing purpose, not proved yet
-        // Tests the behavior that interrupt polling suspends at the last cycle of each instruction.
-        // Implemented only in BRK, Branches and interrupts. 
-        private bool interrupt_suspend;
-        // Others
-        public byte RDY_Cycles;
+        private Pins pins;
         // Internal
-        protected abstract void internalwrite(ushort address, byte value);
-        protected byte internalread(ushort address);
-       
-        public override void HardReset()
+        protected abstract void idle();
+        protected abstract void read();
+        protected abstract void write();
+
+        public void HardReset()
         {
             //registers
-            A = 0x00;
-            X = 0x00;
-            Y = 0x00;
+            registers = new Registers();
+            registers.a = 0x00;
+            registers.x = 0x00;
+            registers.y = 0x00;
 
-            S.LOW = 0xFD;
-            S.Hi = 0x01;
+            registers.spl = 0xFD;
+            registers.sph = 0x01;
 
-            //PC.LOW = NesCore.CPUMemory[0xFFFC];
-            //PC.Hi = NesCore.CPUMemory[0xFFFD];
+            //registers.pcl = NesCore.CPUMemory[0xFFFC];
+            //registers.pch = NesCore.CPUMemory[0xFFFD];
             P.VAL = 0;
             P.I = true;
-            EF.VAL = 0;
+            registers.ea = 0;
             //interrupts
-            NMI_Current = false;
-            IRGFlags = 0;
-            interrupt_suspend = false;
+            pins = new Pins();
+            pins.nmi_current = false;
+            pins.irq_flags = 0;
+            pins.interrupt_suspend = false;
             //others
             opcode = 0;
         }
-        public override void SoftReset()
+        public void SoftReset()
         {
             P.I = true;
-            S.VAL -= 3;
+            registers.sp -= 3;
 
-            PC.LOW = Peek(0xFFFC);
-            PC.Hi = Peek(0xFFFD);
+            registers.pcl = Read(0xFFFC);
+            registers.pch = Read(0xFFFD);
         }
-        public override void Clock()
+        public void Clock()
         {
             // First clock is to fetch opcode
-            opcode = Peek(PC.VAL);
-            PC.VAL++;
+            opcode = Read(registers.pc);
+            registers.pc++;
             // Decode the opcode !!
             // Opcode pattern is aaab bbcc
             // cc bits determine instructions group. We have 4 groups of instructions.
@@ -80,13 +66,13 @@
             }
 
             // Handle interrupts...
-            if (NMI_Detected)
+            if (pins.nmi_detected)
             {
                 Interrupt();
 
-                NMI_Detected = false;// NMI handled !
+                pins.nmi_detected = false;// NMI handled !
             }
-            else if (IRQ_Detected)
+            else if (pins.irq_detected)
             {
                 Interrupt();
             }
@@ -94,16 +80,16 @@
         /*This should be called at phi2 of cycle*/
         public void PollInterruptStatus()
         {
-            if (!interrupt_suspend)
+            if (!pins.interrupt_suspend)
             {
                 // The edge detector, see if nmi occurred. 
-                if (NMI_Current & !NMI_Old) // Raising edge, set nmi request
-                    NMI_Detected = true;
-                NMI_Old = NMI_Current = false;// NMI detected or not, low both lines for this form ___|-|__
+                if (pins.nmi_current & !pins.nmi_old) // Raising edge, set nmi request
+                    pins.nmi_detected = true;
+                pins.nmi_old = pins.nmi_current = false;// NMI detected or not, low both lines for this form ___|-|__
                 // irq level detector
-                IRQ_Detected = (!P.I && IRGFlags != 0);
+                pins.irq_detected = (!P.I && pins.irq_flags != 0);
                 // Update interrupt vector !
-                interrupt_vector = NMI_Detected ? 0xFFFA : 0xFFFE;
+                pins.interrupt_vector = pins.nmi_detected ? 0xFFFA : 0xFFFE;
             }
         }
         private void PollRDY_Read(int address)
@@ -120,7 +106,7 @@
 
                     // Consecutive controller port reads from this are treated as one
                     if (_RDY_Cycles-- > 0)
-                    { Peek(address); }
+                    { Read(address); }
                     while (--_RDY_Cycles > 0)
                     {
                         // Tick();
@@ -130,7 +116,7 @@
                 {
                     // but other addresses see multiple reads as expected
                     while (--_RDY_Cycles > 0)
-                    { Peek(address); }
+                    { Read(address); }
                 }
 
                 // Pending DMA should occur here ...
@@ -145,41 +131,45 @@
         {
             switch (type)
             {
-                case InterruptType.NMI: NMI_Current = assert; break;
-                case InterruptType.APU: if (assert) IRGFlags |= 0x1; else IRGFlags &= ~0x1; break;
-                case InterruptType.DMC: if (assert) IRGFlags |= 0x2; else IRGFlags &= ~0x2; break;
-                case InterruptType.BOARD: if (assert) IRGFlags |= 0x4; else IRGFlags &= ~0x4; break;
+                case InterruptType.NMI: pins.nmi_current = assert; break;
+                case InterruptType.APU: if (assert) pins.irq_flags |= 0x1; else pins.irq_flags &= ~0x1; break;
+                case InterruptType.DMC: if (assert) pins.irq_flags |= 0x2; else pins.irq_flags &= ~0x2; break;
+                case InterruptType.BOARD: if (assert) pins.irq_flags |= 0x4; else pins.irq_flags &= ~0x4; break;
             }
         }
         private void Interrupt()
         {
-            Peek(PC.VAL);
-            Peek(PC.VAL);
+            Read(registers.pc);
+            Read(registers.pc);
 
-            Push(PC.Hi);
-            Push(PC.LOW);
+            Push(registers.pch);
+            Push(registers.pcl);
 
             Push(P.VAL);
             // the vector is detected during φ2 of previous cycle (before push about 2 ppu cycles)
-            int v = interrupt_vector;
+            int v = pins.interrupt_vector;
 
-            interrupt_suspend = true;
-            PC.LOW = Peek(v++); P.I = true;
-            PC.Hi = Peek(v);
-            interrupt_suspend = false;
+            pins.interrupt_suspend = true;
+            registers.pcl = Read(v++); P.I = true;
+            registers.pch = Read(v);
+            pins.interrupt_suspend = false;
         }
 
-        public byte Peek(int address)
+        public byte Read(int address)
         {
             PollRDY_Read(address);
+            pins.address = (ushort)address;
+            read();
             // Tick()
-            return internalread((ushort)address);
+            return pins.data;
         }
-        public void Poke(int address, byte value)
+        public void Write(int address, byte value)
         {
             PollRDY_Write();
+            pins.address = (ushort)address;
+            pins.data = value;
+            write();
             // Tick()
-            internalwrite((ushort)address, value);
         }
 
         private void DecodeInstructionCollection00(byte opcode)
@@ -251,7 +241,7 @@
                         {
                             case 0: Absolute_R(); break;// ILLEGAL ! set TOP
                             case 1: Absolute_R(); BIT(); break;
-                            case 2: Absolute_W(); PC.VAL = EF.VAL;/*JMP*/ break;
+                            case 2: Absolute_W(); registers.pc = registers.ea;/*JMP*/ break;
                             case 3: JMP_I(); break;
                             case 4: Absolute_W(); STY(); break;
                             case 5: Absolute_R(); LDY(); break;
@@ -641,251 +631,251 @@
          */
         private void IndirectX_R()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            Peek(temp);// Clock 2
-            temp += X;
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            Read(temp);// Clock 2
+            temp += registers.x;
 
-            EF.LOW = Peek(temp);// Clock 3
+            registers.eal = Read(temp);// Clock 3
             temp++;
 
-            EF.Hi = Peek(temp);// Clock 4
+            registers.eah = Read(temp);// Clock 4
 
-            M = Peek(EF.VAL);
+            M = Read(registers.ea);
         }
         private void IndirectX_W()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            Peek(temp);// Clock 2
-            temp += X;
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            Read(temp);// Clock 2
+            temp += registers.x;
 
-            EF.LOW = Peek(temp);// Clock 3
+            registers.eal = Read(temp);// Clock 3
             temp++;
 
-            EF.Hi = Peek(temp);// Clock 4
+            registers.eah = Read(temp);// Clock 4
         }
         private void IndirectX_RW()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            Peek(temp);// Clock 2
-            temp += X;
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            Read(temp);// Clock 2
+            temp += registers.x;
 
-            EF.LOW = Peek(temp);// Clock 3
+            registers.eal = Read(temp);// Clock 3
             temp++;
 
-            EF.Hi = Peek(temp);// Clock 4
+            registers.eah = Read(temp);// Clock 4
 
-            M = Peek(EF.VAL);
+            M = Read(registers.ea);
         }
 
         private void IndirectY_R()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            EF.LOW = Peek(temp); temp++;// Clock 2
-            EF.Hi = Peek(temp);// Clock 2
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            registers.eal = Read(temp); temp++;// Clock 2
+            registers.eah = Read(temp);// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
             {
-                EF.Hi++;
-                M = Peek(EF.VAL);// Clock 4
+                registers.eah++;
+                M = Read(registers.ea);// Clock 4
             }
         }
         private void IndirectY_W()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            EF.LOW = Peek(temp); temp++;// Clock 2
-            EF.Hi = Peek(temp);// Clock 2
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            registers.eal = Read(temp); temp++;// Clock 2
+            registers.eah = Read(temp);// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
-                EF.Hi++;
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
+                registers.eah++;
         }
         private void IndirectY_RW()
         {
-            byte temp = Peek(PC.VAL); PC.VAL++;// CLock 1
-            EF.LOW = Peek(temp); temp++;// Clock 2
-            EF.Hi = Peek(temp);// Clock 2
+            byte temp = Read(registers.pc); registers.pc++;// CLock 1
+            registers.eal = Read(temp); temp++;// Clock 2
+            registers.eah = Read(temp);// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
-                EF.Hi++;
+            Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
+                registers.eah++;
 
-            M = Peek(EF.VAL);// Clock 4
+            M = Read(registers.ea);// Clock 4
         }
 
         private void ZeroPage_R()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            M = Peek(EF.VAL);// Clock 2
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            M = Read(registers.ea);// Clock 2
         }
         private void ZeroPage_W()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
         }
         private void ZeroPage_RW()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            M = Peek(EF.VAL);// Clock 2
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            M = Read(registers.ea);// Clock 2
         }
 
         private void ZeroPageX_R()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += X;
-            M = Peek(EF.VAL);// Clock 3
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.x;
+            M = Read(registers.ea);// Clock 3
         }
         private void ZeroPageX_W()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += X;
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.x;
         }
         private void ZeroPageX_RW()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += X;
-            M = Peek(EF.VAL);// Clock 3
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.x;
+            M = Read(registers.ea);// Clock 3
         }
 
         private void ZeroPageY_R()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += Y;
-            M = Peek(EF.VAL);// Clock 3
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.y;
+            M = Read(registers.ea);// Clock 3
         }
         private void ZeroPageY_W()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += Y;
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.y;
         }
         private void ZeroPageY_RW()
         {
-            EF.VAL = Peek(PC.VAL); PC.VAL++;// Clock 1
-            Peek(EF.VAL);// Clock 2
-            EF.LOW += Y;
-            M = Peek(EF.VAL);// Clock 3
+            registers.ea = Read(registers.pc); registers.pc++;// Clock 1
+            Read(registers.ea);// Clock 2
+            registers.eal += registers.y;
+            M = Read(registers.ea);// Clock 3
         }
 
         private void Immediate()
         {
-            M = Peek(PC.VAL); PC.VAL++;// Clock 1
+            M = Read(registers.pc); registers.pc++;// Clock 1
         }
 
         private void ImpliedAccumulator()
         {
-            byte dummy = Peek(PC.VAL);
+            byte dummy = Read(registers.pc);
         }
 
         private void Absolute_R()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
-            M = Peek(EF.VAL);// Clock 3
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
+            M = Read(registers.ea);// Clock 3
         }
         private void Absolute_W()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
         }
         private void Absolute_RW()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
-            M = Peek(EF.VAL);// Clock 3
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
+            M = Read(registers.ea);// Clock 3
         }
 
         private void AbsoluteX_R()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += X;
+            registers.eal += registers.x;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < X)
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.x)
             {
-                EF.Hi++;
-                M = Peek(EF.VAL);// Clock 4
+                registers.eah++;
+                M = Read(registers.ea);// Clock 4
             }
         }
         private void AbsoluteX_W()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += X;
+            registers.eal += registers.x;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < X)
-                EF.Hi++;
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.x)
+                registers.eah++;
         }
         private void AbsoluteX_RW()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += X;
+            registers.eal += registers.x;
 
-            Peek(EF.VAL);// Clock 3
-            if (EF.LOW < X)
-                EF.Hi++;
+            Read(registers.ea);// Clock 3
+            if (registers.eal < registers.x)
+                registers.eah++;
 
-            M = Peek(EF.VAL);// Clock 4
+            M = Read(registers.ea);// Clock 4
         }
 
         private void AbsoluteY_R()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
             {
-                EF.Hi++;
-                M = Peek(EF.VAL);// Clock 4
+                registers.eah++;
+                M = Read(registers.ea);// Clock 4
             }
         }
         private void AbsoluteY_W()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
-                EF.Hi++;
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
+                registers.eah++;
         }
         private void AbsoluteY_RW()
         {
-            EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); PC.VAL++;// Clock 2
+            registers.eal = Read(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Read(registers.pc); registers.pc++;// Clock 2
 
-            EF.LOW += Y;
+            registers.eal += registers.y;
 
-            M = Peek(EF.VAL);// Clock 3
-            if (EF.LOW < Y)
-                EF.Hi++;
+            M = Read(registers.ea);// Clock 3
+            if (registers.eal < registers.y)
+                registers.eah++;
 
-            M = Peek(EF.VAL);// Clock 4
+            M = Read(registers.ea);// Clock 4
         }
         #endregion
         #region Instructions
         private void Branch(bool condition)
         {
-            byte data = Peek(PC.VAL); PC.VAL++;
+            byte data = Read(registers.pc); registers.pc++;
 
             if (condition)
             {
@@ -895,26 +885,26 @@
                 // 6502 never poll interrupts at last cycle of instruction concedering this is the last cycle
                 // if no page crossed.
                 // This work for all instruction too including BRK
-                interrupt_suspend = true;
+                pins.interrupt_suspend = true;
 
-                Peek(PC.VAL);
-                PC.LOW += data;
-                
-                interrupt_suspend = false;
+                Read(registers.pc);
+                registers.pcl += data;
+
+                pins.interrupt_suspend = false;
                 if (data >= 0x80)
                 {
-                    if (PC.LOW >= data)
+                    if (registers.pcl >= data)
                     {
-                        Peek(PC.VAL);
-                        PC.Hi--;
+                        Read(registers.pc);
+                        registers.pch--;
                     }
                 }
                 else
                 {
-                    if (PC.LOW < data)
+                    if (registers.pcl < data)
                     {
-                        Peek(PC.VAL);
-                        PC.Hi++;
+                        Read(registers.pc);
+                        registers.pch++;
                     }
                 }
             }
@@ -922,147 +912,147 @@
         }
         private void Push(byte val)
         {
-            Poke(S.VAL, val);
-            S.LOW--;
+            Write(registers.sp, val);
+            registers.spl--;
         }
         private byte Pull()
         {
-            S.LOW++;
-            return Peek(S.VAL);
+            registers.spl++;
+            return Read(registers.sp);
         }
 
         private void ADC()
         {
-            int t = (A + M + (P.C ? 1 : 0));
+            int t = (registers.a + M + (P.C ? 1 : 0));
 
-            P.V = ((t ^ A) & (t ^ M) & 0x80) != 0;
+            P.V = ((t ^ registers.a) & (t ^ M) & 0x80) != 0;
             P.N = (t & 0x80) != 0;
             P.Z = (t & 0xFF) == 0;
             P.C = (t >> 0x8) != 0;
 
-            A = (byte)(t & 0xFF);
+            registers.a = (byte)(t & 0xFF);
         }
         private void AHX()
         {
-            byte data = (byte)((A & X) & 7);
-            Poke(EF.VAL, data);
+            byte data = (byte)((registers.a & registers.x) & 7);
+            Write(registers.ea, data);
         }
         private void ALR()
         {
-            A &= M;
+            registers.a &= M;
 
-            P.C = (A & 0x01) != 0;
+            P.C = (registers.a & 0x01) != 0;
 
-            A >>= 1;
+            registers.a >>= 1;
 
-            P.N = (A & 0x80) != 0;
-            P.Z = A == 0;
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = registers.a == 0;
         }
         private void ANC()
         {
-            A &= M;
-            P.N = (A & 0x80) != 0;
-            P.Z = A == 0;
-            P.C = (A & 0x80) != 0;
+            registers.a &= M;
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = registers.a == 0;
+            P.C = (registers.a & 0x80) != 0;
         }
         private void AND()
         {
-            A &= M;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a &= M;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void ARR()
         {
-            A = (byte)(((M & A) >> 1) | (P.C ? 0x80 : 0x00));
+            registers.a = (byte)(((M & registers.a) >> 1) | (P.C ? 0x80 : 0x00));
 
-            P.Z = (A & 0xFF) == 0;
-            P.N = (A & 0x80) != 0;
-            P.C = (A & 0x40) != 0;
-            P.V = ((A << 1 ^ A) & 0x40) != 0;
+            P.Z = (registers.a & 0xFF) == 0;
+            P.N = (registers.a & 0x80) != 0;
+            P.C = (registers.a & 0x40) != 0;
+            P.V = ((registers.a << 1 ^ registers.a) & 0x40) != 0;
         }
         private void AXS()
         {
-            int temp = (A & X) - M;
+            int temp = (registers.a & registers.x) - M;
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (~temp >> 8) != 0;
 
-            X = (byte)(temp);
+            registers.x = (byte)(temp);
         }
         private void ASL_M()
         {
             P.C = (M & 0x80) == 0x80;
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
 
             M = (byte)((M << 1) & 0xFE);
 
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
 
             P.N = (M & 0x80) == 0x80;
             P.Z = (M == 0);
         }
         private void ASL_A()
         {
-            P.C = (A & 0x80) == 0x80;
+            P.C = (registers.a & 0x80) == 0x80;
 
-            A = (byte)((A << 1) & 0xFE);
+            registers.a = (byte)((registers.a << 1) & 0xFE);
 
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void BIT()
         {
             P.N = (M & 0x80) != 0;
             P.V = (M & 0x40) != 0;
-            P.Z = (M & A) == 0;
+            P.Z = (M & registers.a) == 0;
         }
         private void BRK()
         {
-            Peek(PC.VAL);
-            PC.VAL++;
+            Read(registers.pc);
+            registers.pc++;
 
-            Push(PC.Hi);
-            Push(PC.LOW);
+            Push(registers.pch);
+            Push(registers.pcl);
 
             Push(P.VALB());
             // the vector is detected during φ2 of previous cycle (before push about 2 ppu cycles)
             int v = interrupt_vector;
 
-            interrupt_suspend = true;
-            PC.LOW = Peek(v++); P.I = true;
-            PC.Hi = Peek(v);
-            interrupt_suspend = false;
+            pins.interrupt_suspend = true;
+            registers.pcl = Read(v++); P.I = true;
+            registers.pch = Read(v);
+            pins.interrupt_suspend = false;
         }
         private void CMP()
         {
-            int t = A - M;
+            int t = registers.a - M;
             P.N = (t & 0x80) == 0x80;
-            P.C = (A >= M);
+            P.C = (registers.a >= M);
             P.Z = (t == 0);
         }
         private void CPX()
         {
-            int t = X - M;
+            int t = registers.x - M;
             P.N = (t & 0x80) == 0x80;
-            P.C = (X >= M);
+            P.C = (registers.x >= M);
             P.Z = (t == 0);
         }
         private void CPY()
         {
-            int t = Y - M;
+            int t = registers.y - M;
             P.N = (t & 0x80) == 0x80;
-            P.C = (Y >= M);
+            P.C = (registers.y >= M);
             P.Z = (t == 0);
         }
         private void DCP()
         {
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
 
             M--;
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
 
-            int data1 = A - M;
+            int data1 = registers.a - M;
 
             P.N = (data1 & 0x80) != 0;
             P.Z = data1 == 0;
@@ -1070,159 +1060,159 @@
         }
         private void DEC()
         {
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             M--;
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             P.N = (M & 0x80) == 0x80;
             P.Z = (M == 0);
         }
         private void DEY()
         {
-            Y--;
-            P.Z = (Y == 0);
-            P.N = (Y & 0x80) == 0x80;
+            registers.y--;
+            P.Z = (registers.y == 0);
+            P.N = (registers.y & 0x80) == 0x80;
         }
         private void DEX()
         {
-            X--;
-            P.Z = (X == 0);
-            P.N = (X & 0x80) == 0x80;
+            registers.x--;
+            P.Z = (registers.x == 0);
+            P.N = (registers.x & 0x80) == 0x80;
         }
         private void EOR()
         {
-            A ^= M;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a ^= M;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void INC()
         {
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             M++;
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             P.N = (M & 0x80) == 0x80;
             P.Z = (M == 0);
         }
         private void INX()
         {
-            X++;
-            P.Z = (X == 0);
-            P.N = (X & 0x80) == 0x80;
+            registers.x++;
+            P.Z = (registers.x == 0);
+            P.N = (registers.x & 0x80) == 0x80;
         }
         private void INY()
         {
-            Y++;
-            P.N = (Y & 0x80) == 0x80;
-            P.Z = (Y == 0);
+            registers.y++;
+            P.N = (registers.y & 0x80) == 0x80;
+            P.Z = (registers.y == 0);
         }
         private void ISC()
         {
-            byte data = Peek(EF.VAL);
+            byte data = Read(registers.ea);
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             data++;
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             int data1 = data ^ 0xFF;
-            int temp = (A + data1 + (P.C ? 1 : 0));
+            int temp = (registers.a + data1 + (P.C ? 1 : 0));
 
             P.N = (temp & 0x80) != 0;
-            P.V = ((temp ^ A) & (temp ^ data1) & 0x80) != 0;
+            P.V = ((temp ^ registers.a) & (temp ^ data1) & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (temp >> 0x8) != 0;
-            A = (byte)(temp);
+            registers.a = (byte)(temp);
         }
         private void JMP_I()
         {
-            EF.LOW = Peek(PC.VAL++);
-            EF.Hi = Peek(PC.VAL++);
+            registers.eal = Read(registers.pc++);
+            registers.eah = Read(registers.pc++);
 
-            byte latch = Peek(EF.VAL);
-            EF.LOW++; // only increment the low byte, causing the "JMP ($nnnn)" bug
-            PC.Hi = Peek(EF.VAL);
+            byte latch = Read(registers.ea);
+            registers.eal++; // only increment the low byte, causing the "JMP ($nnnn)" bug
+            registers.pch = Read(registers.ea);
 
-            PC.LOW = latch;
+            registers.pcl = latch;
         }
         private void JSR()
         {
-            /*EF.LOW = Peek(PC.VAL); PC.VAL++;// Clock 1
-            EF.Hi = Peek(PC.VAL); //PC.VAL++;
+            /*registers.eal = Peek(registers.pc); registers.pc++;// Clock 1
+            registers.eah = Peek(registers.pc); //registers.pc++;
 
-            Push(PC.Hi);
-            Push(PC.LOW);
+            Push(registers.pch);
+            Push(registers.pcl);
 
-            PC.VAL = EF.VAL;
-            Peek(PC.VAL);*/
-            EF.LOW = Peek(PC.VAL); PC.VAL++;
-            EF.Hi = Peek(PC.VAL);
+            registers.pc = registers.ea;
+            Peek(registers.pc);*/
+            registers.eal = Read(registers.pc); registers.pc++;
+            registers.eah = Read(registers.pc);
 
-            Push(PC.Hi);
-            Push(PC.LOW);
+            Push(registers.pch);
+            Push(registers.pcl);
 
-            EF.Hi = Peek(PC.VAL);
-            PC.VAL = EF.VAL;
+            registers.eah = Read(registers.pc);
+            registers.pc = registers.ea;
         }
         private void LAR()
         {
-            S.LOW &= M;
-            A = S.LOW;
-            X = S.LOW;
+            registers.spl &= M;
+            registers.a = registers.spl;
+            registers.x = registers.spl;
 
-            P.N = (S.LOW & 0x80) != 0;
-            P.Z = (S.LOW & 0xFF) == 0;
+            P.N = (registers.spl & 0x80) != 0;
+            P.Z = (registers.spl & 0xFF) == 0;
         }
         private void LAX()
         {
-            X = A = M;
+            registers.x = registers.a = M;
 
-            P.N = (X & 0x80) != 0;
-            P.Z = (X & 0xFF) == 0;
+            P.N = (registers.x & 0x80) != 0;
+            P.Z = (registers.x & 0xFF) == 0;
         }
         private void LDA()
         {
-            A = M;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a = M;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void LDX()
         {
-            X = M;
-            P.N = (X & 0x80) == 0x80;
-            P.Z = (X == 0);
+            registers.x = M;
+            P.N = (registers.x & 0x80) == 0x80;
+            P.Z = (registers.x == 0);
         }
         private void LDY()
         {
-            Y = M;
-            P.N = (Y & 0x80) == 0x80;
-            P.Z = (Y == 0);
+            registers.y = M;
+            P.N = (registers.y & 0x80) == 0x80;
+            P.Z = (registers.y == 0);
         }
         private void LSR_A()
         {
-            P.C = (A & 1) == 1;
-            A >>= 1;
-            P.Z = (A == 0);
-            P.N = (A & 0x80) != 0;
+            P.C = (registers.a & 1) == 1;
+            registers.a >>= 1;
+            P.Z = (registers.a == 0);
+            P.N = (registers.a & 0x80) != 0;
         }
         private void LSR_M()
         {
             P.C = (M & 1) == 1;
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             M >>= 1;
 
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             P.Z = (M == 0);
             P.N = (M & 0x80) != 0;
         }
         private void ORA()
         {
-            A |= M;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a |= M;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void PHA()
         {
-            Push(A);
+            Push(registers.a);
         }
         private void PHP()
         {
@@ -1230,70 +1220,70 @@
         }
         private void PLA()
         {
-            Peek(S.VAL);
-            A = Pull();
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            Read(registers.sp);
+            registers.a = Pull();
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void PLP()
         {
-            Peek(S.VAL);
+            Read(registers.sp);
             P.VAL = Pull();
         }
         private void RLA()
         {
-            byte data = Peek(EF.VAL);
+            byte data = Read(registers.ea);
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             byte temp = (byte)((data << 1) | (P.C ? 0x01 : 0x00));
 
-            Poke(EF.VAL, temp);
+            Write(registers.ea, temp);
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (data & 0x80) != 0;
 
-            A &= temp;
-            P.N = (A & 0x80) != 0;
-            P.Z = (A & 0xFF) == 0;
+            registers.a &= temp;
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = (registers.a & 0xFF) == 0;
         }
         private void ROL_A()
         {
-            byte temp = (byte)((A << 1) | (P.C ? 0x01 : 0x00));
+            byte temp = (byte)((registers.a << 1) | (P.C ? 0x01 : 0x00));
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
-            P.C = (A & 0x80) != 0;
+            P.C = (registers.a & 0x80) != 0;
 
-            A = temp;
+            registers.a = temp;
         }
         private void ROL_M()
         {
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
             byte temp = (byte)((M << 1) | (P.C ? 0x01 : 0x00));
 
-            Poke(EF.VAL, temp);
+            Write(registers.ea, temp);
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (M & 0x80) != 0;
         }
         private void ROR_A()
         {
-            byte temp = (byte)((A >> 1) | (P.C ? 0x80 : 0x00));
+            byte temp = (byte)((registers.a >> 1) | (P.C ? 0x80 : 0x00));
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
-            P.C = (A & 0x01) != 0;
+            P.C = (registers.a & 0x01) != 0;
 
-            A = temp;
+            registers.a = temp;
         }
         private void ROR_M()
         {
-            Poke(EF.VAL, M);
+            Write(registers.ea, M);
 
             byte temp = (byte)((M >> 1) | (P.C ? 0x80 : 0x00));
-            Poke(EF.VAL, temp);
+            Write(registers.ea, temp);
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
@@ -1301,174 +1291,279 @@
         }
         private void RRA()
         {
-            byte data = Peek(EF.VAL);
+            byte data = Read(registers.ea);
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             byte temp = (byte)((data >> 1) | (P.C ? 0x80 : 0x00));
 
-            Poke(EF.VAL, temp);
+            Write(registers.ea, temp);
 
             P.N = (temp & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (data & 0x01) != 0;
 
             data = temp;
-            int temp1 = (A + data + (P.C ? 1 : 0));
+            int temp1 = (registers.a + data + (P.C ? 1 : 0));
 
             P.N = (temp1 & 0x80) != 0;
-            P.V = ((temp1 ^ A) & (temp1 ^ data) & 0x80) != 0;
+            P.V = ((temp1 ^ registers.a) & (temp1 ^ data) & 0x80) != 0;
             P.Z = (temp1 & 0xFF) == 0;
             P.C = (temp1 >> 0x8) != 0;
-            A = (byte)(temp1);
+            registers.a = (byte)(temp1);
         }
         private void RTI()
         {
-            Peek(S.VAL);
+            Read(registers.sp);
             P.VAL = Pull();
 
-            PC.LOW = Pull();
-            PC.Hi = Pull();
+            registers.pcl = Pull();
+            registers.pch = Pull();
         }
         private void RTS()
         {
-            Peek(S.VAL);
-            PC.LOW = Pull();
-            PC.Hi = Pull();
+            Read(registers.sp);
+            registers.pcl = Pull();
+            registers.pch = Pull();
 
-            PC.VAL++;
+            registers.pc++;
 
-            Peek(PC.VAL);
+            Read(registers.pc);
         }
         private void SAX()
-        { Poke(EF.VAL, (byte)(X & A)); }
+        { Write(registers.ea, (byte)(registers.x & registers.a)); }
         private void SBC()
         {
             M ^= 0xFF;
-            int temp = (A + M + (P.C ? 1 : 0));
+            int temp = (registers.a + M + (P.C ? 1 : 0));
 
             P.N = (temp & 0x80) != 0;
-            P.V = ((temp ^ A) & (temp ^ M) & 0x80) != 0;
+            P.V = ((temp ^ registers.a) & (temp ^ M) & 0x80) != 0;
             P.Z = (temp & 0xFF) == 0;
             P.C = (temp >> 0x8) != 0;
-            A = (byte)(temp);
+            registers.a = (byte)(temp);
         }
         private void SHX()
         {
-            byte t = (byte)(X & (EF.Hi + 1));
+            byte t = (byte)(registers.x & (registers.eah + 1));
 
-            Peek(EF.VAL);
-            EF.LOW += Y;
+            Read(registers.ea);
+            registers.eal += registers.y;
 
-            if (EF.LOW < Y)
-                EF.Hi = t;
+            if (registers.eal < registers.y)
+                registers.eah = t;
 
-            Poke(EF.VAL, t);
+            Write(registers.ea, t);
         }
         private void SHY()
         {
-            var t = (byte)(Y & (EF.Hi + 1));
+            var t = (byte)(registers.y & (registers.eah + 1));
 
-            Peek(EF.VAL);
-            EF.LOW += X;
+            Read(registers.ea);
+            registers.eal += registers.x;
 
-            if (EF.LOW < X)
-                EF.Hi = t;
-            Poke(EF.VAL, t);
+            if (registers.eal < registers.x)
+                registers.eah = t;
+            Write(registers.ea, t);
         }
         private void SLO()
         {
-            byte data = Peek(EF.VAL);
+            byte data = Read(registers.ea);
 
             P.C = (data & 0x80) != 0;
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             data <<= 1;
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             P.N = (data & 0x80) != 0;
             P.Z = (data & 0xFF) == 0;
 
-            A |= data;
-            P.N = (A & 0x80) != 0;
-            P.Z = (A & 0xFF) == 0;
+            registers.a |= data;
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = (registers.a & 0xFF) == 0;
         }
         private void SRE()
         {
-            byte data = Peek(EF.VAL);
+            byte data = Read(registers.ea);
 
             P.C = (data & 0x01) != 0;
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             data >>= 1;
 
-            Poke(EF.VAL, data);
+            Write(registers.ea, data);
 
             P.N = (data & 0x80) != 0;
             P.Z = (data & 0xFF) == 0;
 
-            A ^= data;
-            P.N = (A & 0x80) != 0;
-            P.Z = (A & 0xFF) == 0;
+            registers.a ^= data;
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = (registers.a & 0xFF) == 0;
         }
         private void STA()
         {
-            Poke(EF.VAL, A);
+            Write(registers.ea, registers.a);
         }
         private void STX()
         {
-            Poke(EF.VAL, X);
+            Write(registers.ea, registers.x);
         }
         private void STY()
         {
-            Poke(EF.VAL, Y);
+            Write(registers.ea, registers.y);
         }
         private void TAX()
         {
-            X = A;
-            P.N = (X & 0x80) == 0x80;
-            P.Z = (X == 0);
+            registers.x = registers.a;
+            P.N = (registers.x & 0x80) == 0x80;
+            P.Z = (registers.x == 0);
         }
         private void TAY()
         {
-            Y = A;
-            P.N = (Y & 0x80) == 0x80;
-            P.Z = (Y == 0);
+            registers.y = registers.a;
+            P.N = (registers.y & 0x80) == 0x80;
+            P.Z = (registers.y == 0);
         }
         private void TSX()
         {
-            X = S.LOW;
-            P.N = (X & 0x80) != 0;
-            P.Z = X == 0;
+            registers.x = registers.spl;
+            P.N = (registers.x & 0x80) != 0;
+            P.Z = registers.x == 0;
         }
         private void TXA()
         {
-            A = X;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a = registers.x;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void TXS()
-        { S.LOW = X; }
+        { registers.spl = registers.x; }
         private void TYA()
         {
-            A = Y;
-            P.N = (A & 0x80) == 0x80;
-            P.Z = (A == 0);
+            registers.a = registers.y;
+            P.N = (registers.a & 0x80) == 0x80;
+            P.Z = (registers.a == 0);
         }
         private void XAA()
         {
-            A = (byte)(X & M);
-            P.N = (A & 0x80) != 0;
-            P.Z = (A & 0xFF) == 0;
+            registers.a = (byte)(registers.x & M);
+            P.N = (registers.a & 0x80) != 0;
+            P.Z = (registers.a & 0xFF) == 0;
         }
         private void XAS()
         {
-            S.LOW = (byte)(A & X /*& ((dummyVal >> 8) + 1)*/);
-            Poke(EF.VAL, S.LOW);
+            registers.spl = (byte)(registers.a & registers.x /*& ((dummyVal >> 8) + 1)*/);
+            Write(registers.ea, registers.spl);
         }
         #endregion
+    }
+    public enum InterruptType
+    {
+        NMI, APU, DMC, BOARD
+    }
+    public struct Pins
+    {
+        public bool nmi_current;// Represents the current NMI pin (connected to ppu)
+        public bool nmi_old;// Represents the old status if NMI pin, used to generate NMI in raising edge
+        public bool nmi_detected;// Determines that NMI is pending (active when NMI pin become true and was false)
+        public int irq_flags = 0;// Determines that IRQ flags (pins)
+        public bool irq_detected;// Determines that IRQ is pending
+        public int interrupt_vector;// This is the interrupt vector to jump in the last 2 cycles of BRK/IRQ/NMI
+        // This flag suspend interrupt polling; for testing purpose, not proved yet
+        // Tests the behavior that interrupt polling suspends at the last cycle of each instruction.
+        // Implemented only in BRK, Branches and interrupts. 
+        public bool interrupt_suspend;
+        // Others
+        public byte rdy_cycles;
+
+        public ushort address;
+        public byte bank;
+        public byte data;
+    }
+    /// <summary>
+    /// Represents 16-bit register 
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit)]
+    public struct Registers
+    {
+        [FieldOffset(0)]
+        public byte a;
+        [FieldOffset(1)]
+        public byte x;
+        [FieldOffset(2)]
+        public byte y;
+
+        [FieldOffset(4)]
+        public byte pcl;
+        [FieldOffset(5)]
+        public byte pch;
+
+        [FieldOffset(6)]
+        public byte eal;
+        [FieldOffset(7)]
+        public byte eah;
+
+        [FieldOffset(8)]
+        public byte spl;
+        [FieldOffset(9)]
+        public byte sph;
+
+        [FieldOffset(4)]
+        public ushort pc;
+        [FieldOffset(6)]
+        public ushort ea;
+        [FieldOffset(8)]
+        public ushort sp;
+    }
+    public struct StatusRegister
+    {
+        public bool N;
+        public bool V;
+        public bool D;
+        public bool I;
+        public bool Z;
+        public bool C;
+        /// <summary>
+        /// Get or set the value of status register
+        /// </summary>
+        public byte VAL
+        {
+            get
+            {
+                return (byte)(
+                    (N ? 0x80 : 0) |
+                    (V ? 0x40 : 0) |
+                    (D ? 0x08 : 0) |
+                    (I ? 0x04 : 0) |
+                    (Z ? 0x02 : 0) |
+                    (C ? 0x01 : 0) | 0x20);
+            }
+            set
+            {
+                N = (value & 0x80) != 0;
+                V = (value & 0x40) != 0;
+                D = (value & 0x08) != 0;
+                I = (value & 0x04) != 0;
+                Z = (value & 0x02) != 0;
+                C = (value & 0x01) != 0;
+            }
+        }
+        /// <summary>
+        /// Get the value with B flag set
+        /// </summary>
+        public byte VALB()
+        {
+            return (byte)(
+                    (N ? 0x80 : 0) |
+                    (V ? 0x40 : 0) |
+                    (D ? 0x08 : 0) |
+                    (I ? 0x04 : 0) |
+                    (Z ? 0x02 : 0) |
+                    (C ? 0x01 : 0) | 0x30);
+        }
     }
 }
