@@ -45,6 +45,9 @@
     <Compile Include="IConsole.cs" />
     <Compile Include="IInputProvider.cs" />
     <Compile Include="IVideoProvider.cs" />
+    <Compile Include="Processors\MOS\InterruptType.cs" />
+    <Compile Include="Processors\MOS\Register16.cs" />
+    <Compile Include="Processors\MOS\StatusRegister.cs" />
     <Compile Include="Processors\SANYO\LC8760.cs" />
     <Compile Include="Processors\SHARP\LR35902.cs" />
     <Compile Include="Processors\Processor.cs" />
