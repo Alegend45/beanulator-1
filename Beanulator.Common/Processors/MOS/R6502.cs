@@ -94,10 +94,10 @@ namespace Beanulator.Common.Processors.MOS
         }
         private void PollRDY_Read(int address)
         {
-            if (RDY_Cycles > 0)
+            if (pins.rdy_cycles > 0)
             {
-                int _RDY_Cycles = RDY_Cycles;
-                RDY_Cycles = 0;
+                int _RDY_Cycles = pins.rdy_cycles;
+                pins.rdy_cycles = 0;
                 if ((address == 0x4016) || (address == 0x4017))
                 {
                     // The 2A03 DMC gets fetch by pulling RDY low internally. 
@@ -125,7 +125,7 @@ namespace Beanulator.Common.Processors.MOS
         }
         private void PollRDY_Write()
         {
-            if (RDY_Cycles > 0) RDY_Cycles--;
+            if (pins.rdy_cycles > 0) pins.rdy_cycles--;
         }
         public void AssertInterrupt(InterruptType type, bool assert)
         {
