@@ -10,7 +10,15 @@
             this.thread = new CooperativeThread(main);
         }
 
-        protected abstract void main();
-        protected abstract void tick();
+        protected virtual void main() { }
+        protected virtual void tick(int cycles)
+        {
+            this.cycles -= cycles;
+
+            if (this.cycles <= 0)
+            {
+                this.thread.Leave();
+            }
+        }
     }
 }

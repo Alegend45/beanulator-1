@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Beanulator.Common.Processors.RICOH
+namespace Beanulator.Common.Processors.ARM
 {
-    class R65816
+    class ARM9
     {
     }
 }

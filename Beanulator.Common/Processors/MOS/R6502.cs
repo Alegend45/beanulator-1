@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Beanulator.Common.Processors.MIPS
+namespace Beanulator.Common.Processors.MOS
 {
-    class R4300
+    class R6502
     {
     }
 }
